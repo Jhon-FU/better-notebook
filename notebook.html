@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>灵动笔记</title>
+<link rel="icon" href="icon.ico">
+<link rel="stylesheet" href="src/styles/notebook.css">
+</head>
+<body>
+<div id="toolbar">
+  <div class="tb-brand"><span class="logo">📒</span>灵动笔记</div>
+  <button class="tb-btn" id="btnNew" title="清空并新建空白笔记">新建</button>
+  <button class="tb-btn" id="btnOpen" title="打开笔记文件，打开后会自动继续保存到该文件">打开</button>
+  <button class="tb-btn" id="btnSave" title="立即保存（Ctrl+S）">保存</button>
+  <button class="tb-btn" id="btnSaveAs" title="把笔记另存为你选择的位置和文件名">另存为</button>
+  <button class="tb-btn" id="btnExport" title="导出 JSON 备份文件">导出</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn primary" id="btnText" title="在页面中添加一段可自由移动的文字">＋ 文本</button>
+  <button class="tb-btn primary" id="btnCapture" title="截取屏幕或窗口后，可拖动框选范围，只贴入选中的部分">📷 截图</button>
+  <button class="tb-btn" id="btnClipboard" title="从剪贴板读取图片（也可直接 Ctrl+V）">📋 粘贴</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" id="btnZoomOut" title="缩小">−</button>
+  <span id="zoomLabel">100%</span>
+  <button class="tb-btn" id="btnZoomIn" title="放大">＋</button>
+  <button class="tb-btn" id="btnFit" title="让全部内容适合窗口">适合</button>
+  <button class="tb-btn" id="btnReset" title="恢复 100% 视图">1:1</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn paper-btn active" data-paper="lines" title="横线笔记本纸">横线</button>
+  <button class="tb-btn paper-btn" data-paper="grid" title="网格纸">网格</button>
+  <button class="tb-btn paper-btn" data-paper="blank" title="空白纸">空白</button>
+  <button class="tb-btn" id="btnHelp" title="使用帮助">?</button>
+  <span id="status"></span>
+</div>
+<div id="view"><div id="world" class="paper-lines"></div></div>
+<div id="contextBar"></div>
+<div id="hintBar">拖空白处移动 · Ctrl+滚轮缩放</div>
+<div id="dropHint">松开鼠标即可把图片贴到笔记中</div>
+<div id="toast"></div>
+<div id="modal">
+  <div class="modal-box">
+    <h2>使用帮助</h2>
+    <ul>
+      <li><b>记录文字：</b>点工具栏「＋ 文本」，或双击已有文字直接编辑；文字块可以像卡片一样任意拖动摆放。</li>
+      <li><b>截图贴纸：</b>点「📷 截图」选择屏幕/窗口后，会弹出裁剪框，拖动选区或四角即可自由框选范围，确认后只把选中的部分贴入笔记；也可以按 <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> 截屏后，在笔记中按 <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴。</li>
+      <li><b>贴纸自由变换：</b>选中贴纸后，拖右下角手柄缩放、拖顶部圆点旋转、拖贴纸本身移动。</li>
+      <li><b>加粗 / 高亮：</b>双击进入编辑，选中文字后用弹出的浮动工具条加粗、高亮、改颜色、调字号。</li>
+      <li><b>自由移动文本：</b>非编辑状态下按住文字即可拖动；编辑状态下拖左上角「⠿」手柄移动。</li>
+      <li><b>页面操作：</b>拖空白处移动视角，<kbd>Ctrl</kbd>+滚轮缩放；也可以把本地图片直接拖进窗口。</li>
+      <li><b>快捷键：</b><kbd>Ctrl</kbd>+<kbd>S</kbd> 保存，<kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Ctrl</kbd>+<kbd>Y</kbd> 撤销/重做，<kbd>Ctrl</kbd>+<kbd>D</kbd> 复制选中块，<kbd>Delete</kbd> 删除选中块。</li>
+      <li><b>保存：</b>内容会自动保存；点「另存为」可自己选择保存位置和文件名，之后会自动持续保存到该文件，下次打开也会继续使用；「导出」可生成独立备份。</li>
+    </ul>
+    <button class="modal-close">知道了</button>
+  </div>
+</div>
+<div id="cropModal">
+  <div class="crop-stage">
+    <div class="crop-head">
+      <span class="crop-title">拖动选区移动，拖四角调整范围</span>
+      <span id="cropSize"></span>
+      <button id="cropCancel">取消</button>
+      <button id="cropOk">确认贴入</button>
+    </div>
+    <div class="crop-body">
+      <div class="crop-wrap">
+        <img id="cropImg" alt="截图预览" draggable="false">
+        <div id="cropBox">
+          <span class="crop-handle ch-nw" data-dir="nw"></span>
+          <span class="crop-handle ch-ne" data-dir="ne"></span>
+          <span class="crop-handle ch-sw" data-dir="sw"></span>
+          <span class="crop-handle ch-se" data-dir="se"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<input type="file" id="fileInput" accept=".json,application/json" hidden>
+<script type="module" src="src/js/app.js"></script>
+</body>
+</html>

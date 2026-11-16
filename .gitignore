@@ -1,0 +1,23 @@
+# Personal notebooks and the app's browser profile must never be committed.
+/notes.json
+/notes*.json
+/profile/
+/data/
+/backups/
+/灵动笔记*.json
+
+# Development output and machine-specific files.
+node_modules/
+coverage/
+test-results/
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+Desktop.ini
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
