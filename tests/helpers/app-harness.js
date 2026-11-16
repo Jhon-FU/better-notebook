@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { syncTextItem, syncActiveEditor } from '../../src/js/editor-sync.js';
 import { createHistory } from '../../src/js/history.js';
+import { parseNoteText, validateNoteData } from '../../src/js/note-format.js';
 
 class Element {
   constructor() {
@@ -67,7 +68,7 @@ export function createAppHarness() {
   const window = new Element();
   window.getSelection = () => ({ removeAllRanges() {}, addRange() {} });
   const context = vm.createContext({
-    document, window, console, Blob, syncTextItem, syncActiveEditor, createHistory,
+    document, window, console, Blob, syncTextItem, syncActiveEditor, createHistory, parseNoteText, validateNoteData,
     confirm: () => true,
     setTimeout(fn, delay) { timers.set(++timerId, { fn, delay }); return timerId; },
     clearTimeout(id) { timers.delete(id); },
@@ -91,8 +92,7 @@ export function createAppHarness() {
   vm.runInContext(source, context, { filename: 'src/js/app.js' });
   const run = code => vm.runInContext(code, context);
   run(`
-    applySavedData({items:[{id:1,type:'text',html:'old text',x:0,y:0,w:240,z:1,rot:0,fontSize:18,align:'left'}],paper:'lines',images:{}});
-    state.loaded=true;
+    activateLoadedNote({version:1,items:[{id:1,type:'text',html:'old text',x:0,y:0,w:240,z:1,rot:0,fontSize:18,align:'left'}],paper:'lines',images:{}});
     enterEdit(1);
     bindGlobal();
   `);

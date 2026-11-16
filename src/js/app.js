@@ -1,5 +1,6 @@
 import { syncTextItem, syncActiveEditor } from './editor-sync.js';
 import { createHistory } from './history.js';
+import { parseNoteText, validateNoteData } from './note-format.js';
 
 'use strict';
 const view=document.getElementById('view');
@@ -22,6 +23,7 @@ let editHistoryBefore=null;
 let currentFileHandle=null;
 let idb=null;
 let saveQueue=Promise.resolve();
+let openingFile=false, savingPaused=false, defaultFileReady=false;
 
 function $(id){ return document.getElementById(id); }
 function clamp(v,a,b){ return Math.min(b,Math.max(a,v)); }
@@ -618,12 +620,41 @@ function serializeForSave(){
   return {version:1,paper:state.paper,items:state.items.map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,w:i.w,h:i.h,rot:i.rot,z:i.z,html:i.html,srcId:i.srcId,fontSize:i.fontSize,align:i.align})),images:used};
 }
 function applySavedData(data,{resetHistory=true}={}){
-  if(!data || !Array.isArray(data.items)) return false;
-  state.images=data.images||{};
-  rebuildItems(data.items,data.paper||'lines');
+  const validated=validateNoteData(data);
+  state.images=validated.images;
+  rebuildItems(validated.items,validated.paper);
   editHistoryBefore=null;
   if(resetHistory) history.clear();
   return true;
+}
+function activateLoadedNote(data,handle=null,allowDefaultWrite=true){
+  applySavedData(data);
+  clearTimeout(state.saveTimer);
+  state.saveTimer=null;
+  currentFileHandle=handle;
+  defaultFileReady=!handle && allowDefaultWrite;
+  state.loaded=true;
+  state.dirty=false;
+  state.revision++;
+}
+function armAutosave(){
+  clearTimeout(state.saveTimer);
+  state.saveTimer=null;
+  if(!savingPaused) state.saveTimer=setTimeout(()=>{ if(state.loaded) saveNow(); },900);
+}
+async function readSelectedNote(readText){
+  // Finish writes already in flight before reading (also safe when reopening
+  // the same file). A deferred autosave still belongs to the old document.
+  savingPaused=true;
+  clearTimeout(state.saveTimer);
+  state.saveTimer=null;
+  try{
+    await saveQueue;
+    return parseNoteText(await readText());
+  }finally{
+    savingPaused=false;
+    if(state.dirty) armAutosave();
+  }
 }
 function idbOpen(){
   return new Promise((res,rej)=>{
@@ -650,20 +681,27 @@ function idbGet(key){
   });
 }
 async function restoreCustomFile(){
+  let handle=null;
   try{
     idb=await idbOpen();
-    const handle=await idbGet('currentFile');
+    handle=await idbGet('currentFile');
     if(!handle) return false;
     const perm=await handle.queryPermission({mode:'readwrite'});
     if(perm!=='granted'){ toast('上次的自定义笔记文件需要重新授权，可点「打开」重新选择'); return false; }
-    currentFileHandle=handle;
     const file=await handle.getFile();
-    const data=JSON.parse(await file.text());
-    if(applySavedData(data)){ state.loaded=true; setStatus('已打开 '+handle.name,'ok'); return true; }
-  }catch(e){}
+    const data=parseNoteText(await file.text());
+    activateLoadedNote(data,handle);
+    setStatus('已打开 '+handle.name,'ok');
+    return true;
+  }catch(e){ if(handle) toast('上次的笔记未能恢复：'+(e.message||e),5000); }
   return false;
 }
 function saveNow(){
+  if(savingPaused){ setStatus('正在读取笔记，保存暂缓','warn'); return Promise.resolve(false); }
+  if(!state.loaded || (!currentFileHandle && !defaultFileReady)){
+    setStatus('默认笔记未安全载入，请先打开有效笔记或另存为','err');
+    return Promise.resolve(false);
+  }
   clearTimeout(state.saveTimer);
   state.saveTimer=null;
   const body=JSON.stringify(serializeForSave());
@@ -704,52 +742,84 @@ function scheduleSave(){
   state.dirty=true;
   state.revision++;
   setStatus('未保存','warn');
-  clearTimeout(state.saveTimer);
-  state.saveTimer=setTimeout(()=>{ if(state.loaded) saveNow(); },900);
+  armAutosave();
 }
 async function loadNotes(){
   if(await restoreCustomFile()) return;
+  let defaultMissing=false, loadError=null;
   try{
     const res=await fetch('/notes.json',{cache:'no-store'});
-    if(res.ok){ const data=await res.json(); if(applySavedData(data)){ state.loaded=true; setStatus('已打开默认笔记','ok'); return; } }
-  }catch(e){}
+    if(res.ok){
+      const data=parseNoteText(await res.text());
+      activateLoadedNote(data);
+      setStatus('已打开默认笔记','ok');
+      return;
+    }
+    if(res.status===404) defaultMissing=true;
+    else throw new Error('HTTP '+res.status);
+  }catch(e){ loadError=e; }
   try{
     const ls=localStorage.getItem('lingdong-notes');
-    if(ls){ const data=JSON.parse(ls); if(applySavedData(data)){ state.loaded=true; setStatus('已从浏览器本地恢复','warn'); return; } }
+    if(ls){
+      const data=parseNoteText(ls);
+      activateLoadedNote(data,null,defaultMissing);
+      setStatus(defaultMissing?'已从浏览器本地恢复':'已恢复本地副本，请另存为；默认文件写入已暂停','warn');
+      return;
+    }
   }catch(e){}
   state.loaded=true;
+  defaultFileReady=defaultMissing;
+  if(!defaultMissing){
+    setStatus('默认笔记加载失败，写入已暂停；请打开有效笔记或另存为','err');
+    toast('加载失败：'+(loadError?.message||'无法读取默认笔记'),5000);
+    return;
+  }
   createItem('text',170,120,{w:520,html:'<b>欢迎使用灵动笔记 📒</b>',fontSize:26});
   createItem('text',170,195,{w:640,html:'<b>快速上手</b><br>• 双击文字即可编辑内容，按住文字可自由拖动<br>• 点工具栏「📷 截图」截屏，或 Win+Shift+S 后 Ctrl+V 粘贴<br>• 选中文字用浮动工具条加粗 / 高亮 / 改颜色 / 调字号<br>• 选中贴纸后拖右下角缩放、顶部圆点旋转<br>• 拖空白处移动视角，Ctrl+滚轮缩放<br>• 内容会自动保存到程序目录下的 notes.json',fontSize:15});
   scheduleSave();
 }
 
 async function openWithPicker(){
+  if(!state.loaded || openingFile){ toast('笔记正在加载，请稍候再打开'); return; }
   if(window.showOpenFilePicker){
+    openingFile=true;
     try{
       const [handle]=await window.showOpenFilePicker({types:[{description:'JSON 笔记',accept:{'application/json':['.json']}}]});
-      const file=await handle.getFile();
-      const data=JSON.parse(await file.text());
+      const data=await readSelectedNote(async()=>{ const file=await handle.getFile(); return file.text(); });
       if(!confirm('打开该笔记将替换当前内容，确定继续吗？')) return;
-      applySavedData(data);
-      currentFileHandle=handle;
+      activateLoadedNote(data,handle);
       setStatus('已打开 '+handle.name,'ok');
-      scheduleSave();
       toast('已打开：'+handle.name);
       try{ idb=idb||await idbOpen(); await idbSet('currentFile',handle); }catch(e){}
     }catch(err){
       if(err && err.name==='AbortError') return;
-      toast('打开失败：'+(err.message||err));
-    }
+      toast('打开失败：'+(err.message||err),5000);
+    }finally{ openingFile=false; }
     return;
   }
   fileInput.click();
 }
+async function importBackupFile(file){
+  if(!state.loaded || openingFile){ toast('笔记正在加载，请稍候再导入'); return; }
+  openingFile=true;
+  try{
+    const data=await readSelectedNote(()=>file.text());
+    if(!confirm('导入备份将替换当前笔记，确定继续吗？')) return;
+    const before=beginHistoryChange();
+    applySavedData(data,{resetHistory:false});
+    commitHistoryChange(before);
+    toast('备份已导入');
+  }catch(err){ toast('导入失败：'+(err.message||err),5000); }
+  finally{ openingFile=false; }
+}
 async function saveAs(){
+  if(!state.loaded || openingFile){ toast('笔记正在加载，请稍候再另存为'); return; }
   if(!window.showSaveFilePicker){
     toast('当前浏览器不支持自定义保存位置，已按默认位置保存');
     saveNow();
     return;
   }
+  openingFile=true;
   try{
     const d=new Date(), p=n=>String(n).padStart(2,'0');
     const handle=await window.showSaveFilePicker({
@@ -770,7 +840,7 @@ async function saveAs(){
   }catch(err){
     if(err && err.name==='AbortError'){ toast('已取消另存为'); return; }
     toast('另存为失败：'+(err.message||err));
-  }
+  }finally{ openingFile=false; }
 }
 
 /* ---------- 工具栏 ---------- */
@@ -785,19 +855,9 @@ function bindToolbar(){
   });
   $('btnOpen').addEventListener('click',()=>openWithPicker());
   fileInput.addEventListener('change',()=>{
-    const f=fileInput.files[0]; if(!f) return;
-    const rd=new FileReader();
-    rd.onload=()=>{
-      try{
-        const data=JSON.parse(rd.result);
-        if(!confirm('导入备份将替换当前笔记，确定继续吗？')) return;
-        const before=beginHistoryChange();
-        applySavedData(data,{resetHistory:false});
-        commitHistoryChange(before); toast('备份已导入');
-      }catch(e){ toast('备份文件格式不正确'); }
-    };
-    rd.readAsText(f);
+    const f=fileInput.files[0];
     fileInput.value='';
+    if(f) importBackupFile(f);
   });
   $('btnSave').addEventListener('click',()=>saveNow());
   $('btnSaveAs').addEventListener('click',()=>saveAs());
@@ -876,7 +936,7 @@ function bindGlobal(){
     if(document.hidden && state.dirty) saveNow();
   });
   window.addEventListener('beforeunload',()=>{
-    if(!state.dirty || currentFileHandle) return;
+    if(!state.dirty || currentFileHandle || !defaultFileReady || savingPaused) return;
     try{ navigator.sendBeacon('/notes.json',new Blob([JSON.stringify(serializeForSave())],{type:'application/json'})); }catch(e){}
   });
 }

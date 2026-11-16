@@ -215,7 +215,7 @@ test('opening another document clears both history stacks', () => {
   const app = canvasApp();
   moveTo(app, 20);
   moveTo(app, 50);
-  app.run('undo(); applySavedData({items:[{id:9,type:"text",html:"another file",x:100,y:0,w:240,z:1}],images:{},paper:"blank"}); undo(); redo()');
+  app.run('undo(); applySavedData({version:1,items:[{id:9,type:"text",html:"another file",x:100,y:0,w:240,z:1}],images:{},paper:"blank"}); undo(); redo()');
   assert.equal(app.run('state.items.length'), 1);
   assert.equal(app.run('state.items[0].id'), 9);
   assert.equal(app.run('state.paper'), 'blank');
@@ -224,14 +224,14 @@ test('opening another document clears both history stacks', () => {
 test('import history retains both old and new image resources', () => {
   const app = canvasApp();
   app.run(`
-    addImage('data:image/png;base64,OLD',640,480,{x:100,y:100});
+    addImage('data:image/png;base64,T0xE',640,480,{x:100,y:100});
     const beforeImport=beginHistoryChange();
-    applySavedData({items:[{id:9,type:'image',srcId:'imported',w:100,h:100,x:0,y:0,z:1}],images:{imported:'data:image/png;base64,NEW'}},{resetHistory:false});
+    applySavedData({version:1,items:[{id:9,type:'image',srcId:'imported',w:100,h:100,x:0,y:0,z:1}],images:{imported:'data:image/png;base64,TkVX'}},{resetHistory:false});
     commitHistoryChange(beforeImport); undo();
   `);
-  assert.equal(app.run('state.images[state.items[1].srcId]'), 'data:image/png;base64,OLD');
+  assert.equal(app.run('state.images[state.items[1].srcId]'), 'data:image/png;base64,T0xE');
   app.run('redo()');
-  assert.equal(app.run('state.images.imported'), 'data:image/png;base64,NEW');
+  assert.equal(app.run('state.images.imported'), 'data:image/png;base64,TkVX');
 });
 
 test('undo and redo still autosave the restored document', async () => {
