@@ -20,6 +20,10 @@ function number(value, path, { positive = false, integer = false } = {}) {
 export function validateNoteData(data) {
   if (!isObject(data)) fail('文件', '必须是对象');
   if (data.version !== 1) fail('version', '必须为 1；不支持缺失或其他版本');
+  const updatedAt = data.updatedAt === undefined ? 0 : data.updatedAt;
+  if (!Number.isSafeInteger(updatedAt) || updatedAt < 0 || updatedAt > 8640000000000000) {
+    fail('updatedAt', '必须是有效的非负毫秒时间戳');
+  }
   if (!Array.isArray(data.items)) fail('items', '必须是数组');
   const paper = data.paper === undefined ? 'lines' : data.paper;
   if (!['lines', 'grid', 'blank'].includes(paper)) fail('paper', '不是支持的纸张类型');
@@ -63,7 +67,7 @@ export function validateNoteData(data) {
     }
     return item;
   });
-  return { version: 1, paper, items, images };
+  return { version: 1, updatedAt, paper, items, images };
 }
 
 export function parseNoteText(text) {

@@ -45,6 +45,9 @@ for (const [label, source] of [
 }
 
 for (const [label, mutate, errorPath] of [
+  ['negative update time', note => { note.updatedAt = -1; }, 'updatedAt'],
+  ['invalid update time', note => { note.updatedAt = 'yesterday'; }, 'updatedAt'],
+  ['out-of-range update time', note => { note.updatedAt = Number.MAX_SAFE_INTEGER; }, 'updatedAt'],
   ['items not an array', note => { note.items = {}; }, 'items'],
   ['invalid paper', note => { note.paper = 'unsupported'; }, 'paper'],
   ['invalid images container', note => { note.images = []; }, 'images'],

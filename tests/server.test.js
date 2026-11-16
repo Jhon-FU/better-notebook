@@ -78,6 +78,7 @@ test('PowerShell server serves split assets and isolates test notes', {
     ['/src/js/editor-sync.js', 'text/javascript'],
     ['/src/js/history.js', 'text/javascript'],
     ['/src/js/note-format.js', 'text/javascript'],
+    ['/src/js/recovery.js', 'text/javascript'],
     ['/icon.ico', 'image/x-icon'],
   ]) {
     const result = await request(port, url);

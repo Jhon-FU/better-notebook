@@ -3,6 +3,7 @@ import vm from 'node:vm';
 import { syncTextItem, syncActiveEditor } from '../../src/js/editor-sync.js';
 import { createHistory } from '../../src/js/history.js';
 import { parseNoteText, validateNoteData } from '../../src/js/note-format.js';
+import { RECOVERY_KEY, readRecovery, sameNoteContent, recoveryPrompt, clearRecoveryIfUnchanged } from '../../src/js/recovery.js';
 
 class Element {
   constructor() {
@@ -69,6 +70,7 @@ export function createAppHarness() {
   window.getSelection = () => ({ removeAllRanges() {}, addRange() {} });
   const context = vm.createContext({
     document, window, console, Blob, syncTextItem, syncActiveEditor, createHistory, parseNoteText, validateNoteData,
+    RECOVERY_KEY, readRecovery, sameNoteContent, recoveryPrompt, clearRecoveryIfUnchanged,
     confirm: () => true,
     setTimeout(fn, delay) { timers.set(++timerId, { fn, delay }); return timerId; },
     clearTimeout(id) { timers.delete(id); },
@@ -80,6 +82,7 @@ export function createAppHarness() {
     localStorage: {
       setItem(key, value) { localStorage.set(key, value); },
       getItem(key) { return localStorage.get(key) ?? null; },
+      removeItem(key) { localStorage.delete(key); },
     },
     URL: {
       createObjectURL(blob) { downloads.push(blob); return 'blob:test-export'; },

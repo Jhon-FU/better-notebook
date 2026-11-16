@@ -7,6 +7,7 @@
 | 字段 | 约束 |
 | --- | --- |
 | `version` | 必须为数字 `1`；缺失或其他版本不被接受 |
+| `updatedAt` | 内容修改的 Unix 毫秒时间戳；可省略或为 `0`，表示旧笔记时间未知；需为非负整数且不超过 JavaScript 日期范围 |
 | `items` | 必须是元素数组，可以为空 |
 | `paper` | 可省略，默认 `lines`；可选 `lines`、`grid`、`blank` |
 | `images` | 可省略，默认空对象；键为图片资源标识，值为 Base64 图片 data URL |

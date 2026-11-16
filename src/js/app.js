@@ -1,6 +1,7 @@
 import { syncTextItem, syncActiveEditor } from './editor-sync.js';
 import { createHistory } from './history.js';
 import { parseNoteText, validateNoteData } from './note-format.js';
+import { RECOVERY_KEY, readRecovery, sameNoteContent, recoveryPrompt, clearRecoveryIfUnchanged } from './recovery.js';
 
 'use strict';
 const view=document.getElementById('view');
@@ -16,7 +17,7 @@ const state={
   items:[], byId:new Map(), images:{}, nextId:1, maxZ:0,
   zoom:1, panX:60, panY:40,
   selectedId:null, editingId:null, paper:'lines',
-  saveTimer:null, dirty:false, loaded:false, revision:0
+  saveTimer:null, dirty:false, loaded:false, revision:0, updatedAt:0
 };
 const history=createHistory(40);
 let editHistoryBefore=null;
@@ -24,6 +25,7 @@ let currentFileHandle=null;
 let idb=null;
 let saveQueue=Promise.resolve();
 let openingFile=false, savingPaused=false, defaultFileReady=false;
+let recoveryNeedsSave=false;
 
 function $(id){ return document.getElementById(id); }
 function clamp(v,a,b){ return Math.min(b,Math.max(a,v)); }
@@ -614,10 +616,11 @@ function serializeForSave(){
   if(syncActiveEditor(state,elOf)){
     state.dirty=true;
     state.revision++;
+    state.updatedAt=Math.max(Date.now(),state.updatedAt+1);
   }
   const used={};
   state.items.forEach(it=>{ if(it.srcId && state.images[it.srcId]) used[it.srcId]=state.images[it.srcId]; });
-  return {version:1,paper:state.paper,items:state.items.map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,w:i.w,h:i.h,rot:i.rot,z:i.z,html:i.html,srcId:i.srcId,fontSize:i.fontSize,align:i.align})),images:used};
+  return {version:1,updatedAt:state.updatedAt,paper:state.paper,items:state.items.map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,w:i.w,h:i.h,rot:i.rot,z:i.z,html:i.html,srcId:i.srcId,fontSize:i.fontSize,align:i.align})),images:used};
 }
 function applySavedData(data,{resetHistory=true}={}){
   const validated=validateNoteData(data);
@@ -636,11 +639,13 @@ function activateLoadedNote(data,handle=null,allowDefaultWrite=true){
   state.loaded=true;
   state.dirty=false;
   state.revision++;
+  state.updatedAt=data.updatedAt||0;
+  recoveryNeedsSave=false;
 }
 function armAutosave(){
   clearTimeout(state.saveTimer);
   state.saveTimer=null;
-  if(!savingPaused) state.saveTimer=setTimeout(()=>{ if(state.loaded) saveNow(); },900);
+  if(!savingPaused && !recoveryNeedsSave) state.saveTimer=setTimeout(()=>{ if(state.loaded) saveNow(); },900);
 }
 async function readSelectedNote(readText){
   // Finish writes already in flight before reading (also safe when reopening
@@ -704,8 +709,14 @@ function saveNow(){
   }
   clearTimeout(state.saveTimer);
   state.saveTimer=null;
+  recoveryNeedsSave=false;
   const body=JSON.stringify(serializeForSave());
   const revision=state.revision, fileHandle=currentFileHandle;
+  // Checkpoint before the request starts, including saves interrupted by closing.
+  let recoveryStored=false;
+  if(!fileHandle){
+    try{ localStorage.setItem(RECOVERY_KEY,body); recoveryStored=true; }catch(e){}
+  }
   const markSaved=message=>{
     if(currentFileHandle!==fileHandle) return;
     state.dirty=state.revision!==revision;
@@ -727,10 +738,10 @@ function saveNow(){
     try{
       const res=await fetch('/notes.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:body});
       if(!res.ok) throw new Error('HTTP '+res.status);
+      try{ clearRecoveryIfUnchanged(localStorage,body); }catch(e){}
       markSaved('已保存到默认位置 '+now());
     }catch(err){
-      try{ localStorage.setItem('lingdong-notes',body); setStatus('服务器不可用，已保存到浏览器本地','warn'); }
-      catch(e2){ setStatus('保存失败','err'); }
+      if(currentFileHandle===fileHandle) setStatus(recoveryStored?'服务器不可用，已保存到浏览器本地':'保存失败，浏览器副本也未能写入；请导出备份',recoveryStored?'warn':'err');
     }
   };
   // Preserve write order when Ctrl+S overlaps an autosave or a slow disk write.
@@ -739,34 +750,47 @@ function saveNow(){
   return pending;
 }
 function scheduleSave(){
+  recoveryNeedsSave=false;
   state.dirty=true;
   state.revision++;
+  state.updatedAt=Math.max(Date.now(),state.updatedAt+1);
   setStatus('未保存','warn');
   armAutosave();
 }
 async function loadNotes(){
   if(await restoreCustomFile()) return;
+  let recovery=null;
+  try{ recovery=readRecovery(localStorage); }catch(e){ toast('浏览器恢复副本无法读取：'+(e.message||e),5000); }
   let defaultMissing=false, loadError=null;
   try{
     const res=await fetch('/notes.json',{cache:'no-store'});
     if(res.ok){
       const data=parseNoteText(await res.text());
+      if(recovery && !sameNoteContent(data,recovery.note) && confirm(recoveryPrompt(data,recovery.note))){
+        activateLoadedNote(recovery.note);
+        state.dirty=true;
+        state.updatedAt=Math.max(Date.now(),data.updatedAt+1,recovery.note.updatedAt+1);
+        recoveryNeedsSave=true;
+        setStatus('已恢复浏览器副本，请检查后保存','warn');
+        return;
+      }
       activateLoadedNote(data);
+      if(recovery && sameNoteContent(data,recovery.note)){
+        try{ clearRecoveryIfUnchanged(localStorage,recovery.text); }catch(e){}
+      }
       setStatus('已打开默认笔记','ok');
       return;
     }
     if(res.status===404) defaultMissing=true;
     else throw new Error('HTTP '+res.status);
   }catch(e){ loadError=e; }
-  try{
-    const ls=localStorage.getItem('lingdong-notes');
-    if(ls){
-      const data=parseNoteText(ls);
-      activateLoadedNote(data,null,defaultMissing);
+  if(recovery){
+      activateLoadedNote(recovery.note,null,defaultMissing);
+      state.dirty=true;
+      recoveryNeedsSave=true;
       setStatus(defaultMissing?'已从浏览器本地恢复':'已恢复本地副本，请另存为；默认文件写入已暂停','warn');
       return;
-    }
-  }catch(e){}
+  }
   state.loaded=true;
   defaultFileReady=defaultMissing;
   if(!defaultMissing){
@@ -933,11 +957,13 @@ function bindGlobal(){
     if(e.key==='Escape') deselectAll();
   });
   document.addEventListener('visibilitychange',()=>{
-    if(document.hidden && state.dirty) saveNow();
+    if(document.hidden && state.dirty && !recoveryNeedsSave) saveNow();
   });
   window.addEventListener('beforeunload',()=>{
-    if(!state.dirty || currentFileHandle || !defaultFileReady || savingPaused) return;
-    try{ navigator.sendBeacon('/notes.json',new Blob([JSON.stringify(serializeForSave())],{type:'application/json'})); }catch(e){}
+    if(!state.dirty || currentFileHandle || !defaultFileReady || savingPaused || recoveryNeedsSave) return;
+    const body=JSON.stringify(serializeForSave());
+    try{ localStorage.setItem(RECOVERY_KEY,body); }catch(e){}
+    try{ navigator.sendBeacon('/notes.json',new Blob([body],{type:'application/json'})); }catch(e){}
   });
 }
 
