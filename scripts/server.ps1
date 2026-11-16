@@ -14,6 +14,7 @@ $staticFiles = @{
   '/src/styles/notebook.css' = @('src/styles/notebook.css', 'text/css; charset=utf-8')
   '/src/js/app.js' = @('src/js/app.js', 'text/javascript; charset=utf-8')
   '/src/js/editor-sync.js' = @('src/js/editor-sync.js', 'text/javascript; charset=utf-8')
+  '/src/js/history.js' = @('src/js/history.js', 'text/javascript; charset=utf-8')
   '/icon.ico' = @('icon.ico', 'image/x-icon')
   '/favicon.ico' = @('icon.ico', 'image/x-icon')
 }

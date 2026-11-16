@@ -1,4 +1,5 @@
 import { syncTextItem, syncActiveEditor } from './editor-sync.js';
+import { createHistory } from './history.js';
 
 'use strict';
 const view=document.getElementById('view');
@@ -14,8 +15,10 @@ const state={
   items:[], byId:new Map(), images:{}, nextId:1, maxZ:0,
   zoom:1, panX:60, panY:40,
   selectedId:null, editingId:null, paper:'lines',
-  history:[], histIdx:-1, saveTimer:null, dirty:false, loaded:false, revision:0
+  saveTimer:null, dirty:false, loaded:false, revision:0
 };
+const history=createHistory(40);
+let editHistoryBefore=null;
 let currentFileHandle=null;
 let idb=null;
 let saveQueue=Promise.resolve();
@@ -229,14 +232,16 @@ function positionContextBar(){
 let gesture=null;
 function startItemGesture(e,it,immediate){
   if(e.pointerType==='mouse' && e.button!==0) return;
-  if(state.editingId && state.editingId!==it.id) exitEdit(state.editingId);
+  if(state.editingId!==null) exitEdit(state.editingId);
   gesture={ kind:'move', id:it.id, sx:e.clientX, sy:e.clientY, ox:it.x, oy:it.y, moved:false, snapped:false, immediate:immediate };
   e.preventDefault();
 }
 function startResizeGesture(e,it){
+  if(state.editingId!==null) exitEdit(state.editingId);
   gesture={ kind:'resize', id:it.id, sx:e.clientX, sy:e.clientY, sw:it.w, sh:it.h, moved:false, snapped:false };
 }
 function startRotateGesture(e,it){
+  if(state.editingId!==null) exitEdit(state.editingId);
   const r=elOf(it.id).getBoundingClientRect();
   const cx=r.left+r.width/2, cy=r.top+r.height/2;
   gesture={ kind:'rotate', id:it.id, cx:cx, cy:cy, sa:Math.atan2(e.clientY-cy,e.clientX-cx), sr:it.rot, moved:false, snapped:false };
@@ -248,12 +253,12 @@ window.addEventListener('pointermove',e=>{
   const dx=(e.clientX-gesture.sx)/state.zoom, dy=(e.clientY-gesture.sy)/state.zoom;
   if(gesture.kind==='move'){
     if(!gesture.moved && !gesture.immediate && Math.hypot(e.clientX-gesture.sx,e.clientY-gesture.sy)<3) return;
-    if(!gesture.snapped){ gesture.snapped=true; snapshot('移动'); }
+    if(!gesture.snapped){ gesture.snapped=true; gesture.before=serializeForSave(); }
     gesture.moved=true;
     it.x=Math.round(gesture.ox+dx); it.y=Math.round(gesture.oy+dy);
     el.style.left=it.x+'px'; el.style.top=it.y+'px';
   }else if(gesture.kind==='resize'){
-    if(!gesture.snapped){ gesture.snapped=true; snapshot('缩放'); }
+    if(!gesture.snapped){ gesture.snapped=true; gesture.before=serializeForSave(); }
     gesture.moved=true;
     let w=Math.max(it.type==='image'?60:120,gesture.sw+dx);
     if(it.type==='image'){
@@ -264,7 +269,7 @@ window.addEventListener('pointermove',e=>{
       it.w=Math.round(w); el.style.width=it.w+'px';
     }
   }else if(gesture.kind==='rotate'){
-    if(!gesture.snapped){ gesture.snapped=true; snapshot('旋转'); }
+    if(!gesture.snapped){ gesture.snapped=true; gesture.before=serializeForSave(); }
     gesture.moved=true;
     const a=Math.atan2(e.clientY-gesture.cy,e.clientX-gesture.cx);
     let deg=(a-gesture.sa)*180/Math.PI+gesture.sr;
@@ -276,8 +281,8 @@ window.addEventListener('pointermove',e=>{
 window.addEventListener('pointerup',()=>{
   if(!gesture) return;
   const g=gesture; gesture=null;
+  if(g.moved) commitHistoryChange(g.before);
   if(g.kind==='move' && g.id) selectItem(g.id);
-  if(g.moved) scheduleSave();
 });
 
 /* ---------- 空白处平移 ---------- */
@@ -308,12 +313,13 @@ view.addEventListener('wheel',e=>{
 /* ---------- 文本编辑与格式 ---------- */
 function enterEdit(id){
   const it=state.byId.get(id); if(!it||it.type!=='text') return;
+  if(state.editingId===id) return;
   if(state.editingId && state.editingId!==id) exitEdit(state.editingId);
-  snapshot('编辑');
   state.editingId=id;
   const el=elOf(id), c=el.querySelector('.text-content');
   c.contentEditable='true'; el.classList.add('editing');
   selectItem(id);
+  editHistoryBefore=serializeForSave();
   c.focus();
   const range=document.createRange(); range.selectNodeContents(c); range.collapse(false);
   const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
@@ -324,10 +330,11 @@ function exitEdit(id){
   if(state.editingId!==id) return;
   const el=elOf(id), c=el.querySelector('.text-content');
   syncTextItem(it,c);
-  c.contentEditable='false'; el.classList.remove('editing');
+  const before=editHistoryBefore;
+  editHistoryBefore=null;
   state.editingId=null;
-  snapshot('编辑');
-  scheduleSave();
+  c.contentEditable='false'; el.classList.remove('editing');
+  commitHistoryChange(before);
   refreshContextBar();
 }
 function wrapSelection(style){
@@ -363,28 +370,30 @@ function applyColor(color){
 function changeFontSize(delta){
   const it=state.selectedId?state.byId.get(state.selectedId):null;
   if(!it||it.type!=='text') return;
-  snapshot('字号');
+  const before=state.editingId===it.id?null:serializeForSave();
   it.fontSize=clamp(it.fontSize+delta,10,72);
   const c=elOf(it.id).querySelector('.text-content'); c.style.fontSize=it.fontSize+'px';
-  scheduleSave(); refreshContextBar();
+  if(before) commitHistoryChange(before); else scheduleSave();
+  refreshContextBar();
 }
 function setAlign(a){
   const it=state.selectedId?state.byId.get(state.selectedId):null;
   if(!it||it.type!=='text') return;
-  snapshot('对齐');
+  const before=state.editingId===it.id?null:serializeForSave();
   it.align=a; elOf(it.id).querySelector('.text-content').style.textAlign=a;
-  scheduleSave(); refreshContextBar();
+  if(before) commitHistoryChange(before); else scheduleSave();
+  refreshContextBar();
 }
 
 /* ---------- 添加 / 复制 / 删除 ---------- */
 function addTextAt(x,y){
-  snapshot('添加文本');
+  const before=beginHistoryChange();
   const it=createItem('text',x,y,{w:240,html:'双击编辑文字内容…',fontSize:18});
+  commitHistoryChange(before);
   selectItem(it.id); enterEdit(it.id);
-  scheduleSave();
 }
 function addImage(src,nw,nh,point){
-  snapshot('添加图片');
+  const before=beginHistoryChange();
   const ratio=(nw>0&&nh>0)?nh/nw:0.75;
   let w=(nw>0&&nh>0&&nw/nh>2.3)?560:420;
   const h=Math.max(80,Math.round(w*ratio));
@@ -392,7 +401,7 @@ function addImage(src,nw,nh,point){
   state.images[srcId]=src;
   const p=point||viewCenterStage();
   const it=createItem('image',p.x-w/2,p.y-h/2,{w:w,h:h,srcId:srcId});
-  selectItem(it.id); scheduleSave();
+  selectItem(it.id); commitHistoryChange(before);
   return it;
 }
 function addImageFromDataUrlAt(src,point){
@@ -403,34 +412,33 @@ function addImageFromDataUrlAt(src,point){
 }
 function duplicateItem(id){
   const it=state.byId.get(id); if(!it) return;
-  snapshot('复制');
+  const before=beginHistoryChange();
   const copy=createItem(it.type,it.x+24,it.y+24,{w:it.w,h:it.h,rot:it.rot,html:it.html,srcId:it.srcId,fontSize:it.fontSize,align:it.align});
-  selectItem(copy.id); scheduleSave(); toast('已复制');
+  selectItem(copy.id); commitHistoryChange(before); toast('已复制');
 }
 function deleteItem(id){
   const it=state.byId.get(id); if(!it) return;
-  snapshot('删除');
-  if(state.editingId===id) state.editingId=null;
+  const before=beginHistoryChange();
   if(state.selectedId===id){ state.selectedId=null; contextBar.style.display='none'; }
   const el=elOf(id); if(el) el.remove();
   state.items=state.items.filter(i=>i.id!==id); state.byId.delete(id);
-  scheduleSave();
+  commitHistoryChange(before);
 }
 function imgZoom(k){
   const it=state.selectedId?state.byId.get(state.selectedId):null;
   if(!it||it.type!=='image') return;
-  snapshot('缩放');
+  const before=beginHistoryChange();
   it.w=Math.max(60,Math.round(it.w*k)); it.h=Math.max(40,Math.round(it.h*k));
   const el=elOf(it.id); el.style.width=it.w+'px'; el.style.height=it.h+'px';
-  scheduleSave(); refreshContextBar();
+  commitHistoryChange(before); refreshContextBar();
 }
 function rotateBy(deg){
   const it=state.selectedId?state.byId.get(state.selectedId):null;
   if(!it) return;
-  snapshot('旋转');
+  const before=beginHistoryChange();
   it.rot=(it.rot+deg)%360;
   elOf(it.id).style.transform='rotate('+it.rot+'deg)';
-  scheduleSave(); refreshContextBar();
+  commitHistoryChange(before); refreshContextBar();
 }
 
 /* ---------- 截图裁剪（窗口/屏幕截图后先选范围） ---------- */
@@ -556,16 +564,28 @@ async function readClipboardImage(){
 }
 
 /* ---------- 历史（撤销 / 重做） ---------- */
-function snapshot(label){
-  state.history=state.history.slice(0,state.histIdx+1);
-  state.history.push(JSON.stringify({items:state.items.map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,w:i.w,h:i.h,rot:i.rot,z:i.z,html:i.html,srcId:i.srcId,fontSize:i.fontSize,align:i.align})),paper:state.paper}));
-  if(state.history.length>40) state.history.shift();
-  state.histIdx=state.history.length-1;
+function beginHistoryChange(){
+  if(state.editingId!==null) exitEdit(state.editingId);
+  return serializeForSave();
 }
-function undo(){ if(state.editingId||state.histIdx<=0) return; state.histIdx--; applyHistory(); }
-function redo(){ if(state.editingId||state.histIdx>=state.history.length-1) return; state.histIdx++; applyHistory(); }
-function applyHistory(){
-  const data=JSON.parse(state.history[state.histIdx]);
+function commitHistoryChange(before){
+  if(!before || !history.record(before,serializeForSave())) return false;
+  scheduleSave();
+  return true;
+}
+function undo(){
+  if(state.editingId!==null || gesture) return;
+  const previous=history.undo(serializeForSave());
+  if(previous) applyHistory(previous);
+}
+function redo(){
+  if(state.editingId!==null || gesture) return;
+  const next=history.redo(serializeForSave());
+  if(next) applyHistory(next);
+}
+function applyHistory(data){
+  state.images={...data.images};
+  editHistoryBefore=null;
   rebuildItems(data.items,data.paper);
   scheduleSave();
 }
@@ -581,7 +601,7 @@ function rebuildItems(items,paper){
     world.appendChild(buildItemEl(it));
   });
   state.selectedId=null; state.editingId=null; contextBar.style.display='none';
-  setPaper(paper||state.paper);
+  applyPaper(paper||state.paper);
   applyView();
 }
 
@@ -597,10 +617,12 @@ function serializeForSave(){
   state.items.forEach(it=>{ if(it.srcId && state.images[it.srcId]) used[it.srcId]=state.images[it.srcId]; });
   return {version:1,paper:state.paper,items:state.items.map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,w:i.w,h:i.h,rot:i.rot,z:i.z,html:i.html,srcId:i.srcId,fontSize:i.fontSize,align:i.align})),images:used};
 }
-function applySavedData(data){
+function applySavedData(data,{resetHistory=true}={}){
   if(!data || !Array.isArray(data.items)) return false;
   state.images=data.images||{};
   rebuildItems(data.items,data.paper||'lines');
+  editHistoryBefore=null;
+  if(resetHistory) history.clear();
   return true;
 }
 function idbOpen(){
@@ -689,11 +711,11 @@ async function loadNotes(){
   if(await restoreCustomFile()) return;
   try{
     const res=await fetch('/notes.json',{cache:'no-store'});
-    if(res.ok){ const data=await res.json(); if(applySavedData(data)){ state.loaded=true; return; } }
+    if(res.ok){ const data=await res.json(); if(applySavedData(data)){ state.loaded=true; setStatus('已打开默认笔记','ok'); return; } }
   }catch(e){}
   try{
     const ls=localStorage.getItem('lingdong-notes');
-    if(ls){ const data=JSON.parse(ls); if(applySavedData(data)){ state.loaded=true; return; } }
+    if(ls){ const data=JSON.parse(ls); if(applySavedData(data)){ state.loaded=true; setStatus('已从浏览器本地恢复','warn'); return; } }
   }catch(e){}
   state.loaded=true;
   createItem('text',170,120,{w:520,html:'<b>欢迎使用灵动笔记 📒</b>',fontSize:26});
@@ -708,7 +730,6 @@ async function openWithPicker(){
       const file=await handle.getFile();
       const data=JSON.parse(await file.text());
       if(!confirm('打开该笔记将替换当前内容，确定继续吗？')) return;
-      snapshot('打开');
       applySavedData(data);
       currentFileHandle=handle;
       setStatus('已打开 '+handle.name,'ok');
@@ -756,11 +777,11 @@ async function saveAs(){
 function bindToolbar(){
   $('btnNew').addEventListener('click',()=>{
     if(!confirm('确定清空当前笔记，新建空白笔记吗？')) return;
-    snapshot('新建');
+    const before=beginHistoryChange();
     state.items=[]; state.byId.clear();
     world.querySelectorAll('.item').forEach(el=>el.remove());
     state.selectedId=null; state.editingId=null; contextBar.style.display='none';
-    scheduleSave();
+    commitHistoryChange(before);
   });
   $('btnOpen').addEventListener('click',()=>openWithPicker());
   fileInput.addEventListener('change',()=>{
@@ -770,9 +791,9 @@ function bindToolbar(){
       try{
         const data=JSON.parse(rd.result);
         if(!confirm('导入备份将替换当前笔记，确定继续吗？')) return;
-        snapshot('导入');
-        applySavedData(data);
-        scheduleSave(); toast('备份已导入');
+        const before=beginHistoryChange();
+        applySavedData(data,{resetHistory:false});
+        commitHistoryChange(before); toast('备份已导入');
       }catch(e){ toast('备份文件格式不正确'); }
     };
     rd.readAsText(f);
@@ -843,8 +864,9 @@ function bindGlobal(){
     const editing=state.editingId!==null;
     if(cropState && e.key==='Escape'){ e.preventDefault(); closeCrop(); return; }
     if(e.ctrlKey && e.key.toLowerCase()==='s'){ e.preventDefault(); saveNow(); return; }
-    if(e.ctrlKey && e.key.toLowerCase()==='z'){ e.preventDefault(); if(e.shiftKey) redo(); else undo(); return; }
-    if(e.ctrlKey && e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); return; }
+    // Let the focused contenteditable handle its native text undo/redo.
+    if(e.ctrlKey && e.key.toLowerCase()==='z'){ if(editing) return; e.preventDefault(); if(e.shiftKey) redo(); else undo(); return; }
+    if(e.ctrlKey && e.key.toLowerCase()==='y'){ if(editing) return; e.preventDefault(); redo(); return; }
     if(e.ctrlKey && e.key.toLowerCase()==='d' && !editing){ e.preventDefault(); if(state.selectedId) duplicateItem(state.selectedId); return; }
     if(editing) return;
     if((e.key==='Delete'||e.key==='Backspace') && state.selectedId){ e.preventDefault(); deleteItem(state.selectedId); }
@@ -861,10 +883,15 @@ function bindGlobal(){
 
 /* ---------- 纸张样式 ---------- */
 function setPaper(kind){
+  if(kind===state.paper) return;
+  const before=beginHistoryChange();
+  applyPaper(kind);
+  commitHistoryChange(before);
+}
+function applyPaper(kind){
   state.paper=kind;
   world.className='paper-'+kind;
   document.querySelectorAll('.paper-btn').forEach(b=>b.classList.toggle('active',b.dataset.paper===kind));
-  scheduleSave();
 }
 
 /* ---------- 启动 ---------- */

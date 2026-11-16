@@ -33,7 +33,8 @@ better-notebook/
 ├── src/
 │   ├── js/
 │   │   ├── app.js              # 画布、富文本、历史、文件操作与应用事件
-│   │   └── editor-sync.js      # 编辑内容与数据模型同步
+│   │   ├── editor-sync.js      # 编辑内容与数据模型同步
+│   │   └── history.js          # 文档操作历史
 │   └── styles/notebook.css      # 界面样式
 ├── scripts/
 │   ├── launcher.ps1             # 浏览器与本地服务启动
@@ -42,10 +43,6 @@ better-notebook/
 ├── docs/                        # 使用和维护说明
 └── .github/workflows/test.yml   # Windows 持续集成
 ```
-
-## 本次保存修复
-
-文字输入和中文输入完成时会同步到数据模型，并在停止输入约 900 毫秒后自动保存。Ctrl+S、另存为和导出都会再次读取当前编辑内容，保存过程中不会退出编辑模式。普通保存请求按顺序执行，旧请求完成后不会把较新的修改标记为“已保存”。
 
 ## 开发与验证
 
