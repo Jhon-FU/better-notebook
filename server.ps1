@@ -5,3 +5,4 @@ param(
 
 # Compatibility entry point; implementation lives with the other scripts.
 & (Join-Path $PSScriptRoot 'scripts/server.ps1') @PSBoundParameters
+exit $LASTEXITCODE

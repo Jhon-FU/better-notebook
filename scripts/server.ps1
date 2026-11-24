@@ -6,7 +6,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'storage.ps1')
+. (Join-Path $PSScriptRoot 'startup.ps1')
 if (-not $DataDirectory) { $DataDirectory = $root }
+$DataDirectory = [System.IO.Path]::GetFullPath($DataDirectory)
+if (-not [System.IO.Directory]::Exists($DataDirectory)) { throw 'Notebook data directory does not exist.' }
+$health = @{
+  app = 'better-notebook'; protocol = 1; root = $root; dataDirectory = $DataDirectory; pid = $PID
+  build = Get-NotebookBuildId -Root $root
+} | ConvertTo-Json -Compress
 $notesPath = Join-Path $DataDirectory 'notes.json'
 $staticFiles = @{
   '/' = @('notebook.html', 'text/html; charset=utf-8')
@@ -26,8 +33,8 @@ $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopba
 try {
   $listener.Start()
 } catch {
-  # Port already in use: another instance is already serving.
-  exit 0
+  Write-Error "Notebook server could not bind to port $Port." -ErrorAction Continue
+  exit 1
 }
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -101,7 +108,9 @@ while ($true) {
       $body = $utf8.GetString($bodyBytes)
     }
 
-    if ($staticFiles.ContainsKey($path) -and $method -eq 'GET') {
+    if ($path -eq '/health' -and $method -eq 'GET') {
+      Send-Text $stream 200 'application/json; charset=utf-8' $health
+    } elseif ($staticFiles.ContainsKey($path) -and $method -eq 'GET') {
       $asset = $staticFiles[$path]
       $assetPath = Join-Path $root $asset[0]
       if (Test-Path -LiteralPath $assetPath) {

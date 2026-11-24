@@ -4,6 +4,7 @@
 /profile/
 /data/
 /backups/
+/logs/
 /灵动笔记*.json
 
 # Development output and machine-specific files.
