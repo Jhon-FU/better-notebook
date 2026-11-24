@@ -25,6 +25,7 @@ $staticFiles = @{
   '/src/js/history.js' = @('src/js/history.js', 'text/javascript; charset=utf-8')
   '/src/js/note-format.js' = @('src/js/note-format.js', 'text/javascript; charset=utf-8')
   '/src/js/recovery.js' = @('src/js/recovery.js', 'text/javascript; charset=utf-8')
+  '/src/js/ink.js' = @('src/js/ink.js', 'text/javascript; charset=utf-8')
   '/icon.ico' = @('icon.ico', 'image/x-icon')
   '/favicon.ico' = @('icon.ico', 'image/x-icon')
 }
@@ -127,7 +128,7 @@ while ($true) {
     } elseif ($path -eq '/notes.json' -and ($method -eq 'POST' -or $method -eq 'PUT')) {
       try {
         $parsed = $body | ConvertFrom-Json
-        if ($null -eq $parsed -or $parsed.version -ne 1 -or $parsed.items -isnot [System.Array]) { throw 'Invalid notebook' }
+        if ($null -eq $parsed -or $parsed.version -notin @(1, 2) -or $parsed.items -isnot [System.Array]) { throw 'Invalid notebook' }
       } catch {
         Send-Text $stream 400 'application/json' '{"error":"bad json"}'
         $client.Close()

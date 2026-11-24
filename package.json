@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "check": "node --check src/js/app.js && node --check src/js/editor-sync.js && node --check src/js/history.js && node --check src/js/note-format.js && node --check src/js/recovery.js",
+    "check": "node --check src/js/app.js && node --check src/js/editor-sync.js && node --check src/js/history.js && node --check src/js/note-format.js && node --check src/js/recovery.js && node --check src/js/ink.js",
     "start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./launcher.ps1"
   },
   "engines": {

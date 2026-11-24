@@ -2,6 +2,7 @@ import { syncTextItem, syncActiveEditor } from './editor-sync.js';
 import { createHistory } from './history.js';
 import { parseNoteText, validateNoteData } from './note-format.js';
 import { RECOVERY_KEY, readRecovery, sameNoteContent, recoveryPrompt, clearRecoveryIfUnchanged } from './recovery.js';
+import { normalizeStroke, inkPath } from './ink.js';
 
 'use strict';
 const view=document.getElementById('view');
@@ -12,6 +13,7 @@ const zoomLabel=document.getElementById('zoomLabel');
 const statusEl=document.getElementById('status');
 const modal=document.getElementById('modal');
 const fileInput=document.getElementById('fileInput');
+const inkLayer=document.getElementById('inkLayer');
 
 const state={
   items:[], byId:new Map(), images:{}, nextId:1, maxZ:0,
@@ -26,6 +28,7 @@ let idb=null;
 let saveQueue=Promise.resolve();
 let openingFile=false, savingPaused=false, defaultFileReady=false;
 let recoveryNeedsSave=false;
+let tool='select', penColor='#dc2626', penWidth=4, inkDraft=null;
 
 function $(id){ return document.getElementById(id); }
 function clamp(v,a,b){ return Math.min(b,Math.max(a,v)); }
@@ -78,18 +81,21 @@ function createItem(type,x,y,opts){
   const it={ id:state.nextId++, type:type, x:x, y:y, z:++state.maxZ, rot:opts.rot||0 };
   if(type==='text'){
     it.w=opts.w||240; it.html=opts.html||''; it.fontSize=opts.fontSize||18; it.align=opts.align||'left';
+  }else if(type==='ink'){
+    it.w=opts.w; it.h=opts.h; it.color=opts.color; it.strokeWidth=opts.strokeWidth;
+    it.points=opts.points.map(p=>p.slice());
   }else{
     it.srcId=opts.srcId;
     const ratio=(opts.h&&opts.w)?opts.h/opts.w:0.75;
     it.w=opts.w||420; it.h=Math.max(80,Math.round(it.w*ratio));
   }
   state.items.push(it); state.byId.set(it.id,it);
-  world.appendChild(buildItemEl(it));
+  (type==='ink'?inkLayer:world).appendChild(buildItemEl(it));
   return it;
 }
 function buildItemEl(it){
   const el=document.createElement('div');
-  el.className='item '+(it.type==='text'?'text-item':'img-item');
+  el.className='item '+(it.type==='text'?'text-item':it.type==='ink'?'ink-item':'img-item');
   el.dataset.id=it.id;
   el.style.left=it.x+'px'; el.style.top=it.y+'px'; el.style.zIndex=it.z;
   if(it.type==='text'){
@@ -101,6 +107,12 @@ function buildItemEl(it){
     el.appendChild(c);
     const dh=document.createElement('div'); dh.className='handle drag-handle'; dh.textContent='⠿'; dh.title='拖动文字';
     el.appendChild(dh);
+  }else if(it.type==='ink'){
+    el.style.width=it.w+'px'; el.style.height=it.h+'px';
+    const svg=makeInkSvg(it.color,it.strokeWidth);
+    svg.setAttribute('viewBox','0 0 '+it.w+' '+it.h);
+    svg.querySelector('.ink-path').setAttribute('d',inkPath(it.points,it.w,it.h));
+    el.appendChild(svg);
   }else{
     el.style.width=it.w+'px'; el.style.height=it.h+'px';
     const img=document.createElement('img'); img.src=state.images[it.srcId]||''; img.draggable=false;
@@ -206,6 +218,12 @@ function refreshContextBar(){
     g.appendChild(btn('复制','复制此块',()=>duplicateItem(it.id)));
     g.appendChild(btn('删除','删除此块',()=>deleteItem(it.id),true));
     contextBar.appendChild(g);
+  }else if(it.type==='ink'){
+    const g=group();
+    g.appendChild(label('笔迹'));
+    g.appendChild(btn('复制','复制此笔迹',()=>duplicateItem(it.id)));
+    g.appendChild(btn('删除','删除此笔迹',()=>deleteItem(it.id),true));
+    contextBar.appendChild(g);
   }else{
     let g=group();
     g.appendChild(btn('缩小','贴纸缩小 15%',()=>imgZoom(0.85)));
@@ -264,11 +282,16 @@ window.addEventListener('pointermove',e=>{
   }else if(gesture.kind==='resize'){
     if(!gesture.snapped){ gesture.snapped=true; gesture.before=serializeForSave(); }
     gesture.moved=true;
-    let w=Math.max(it.type==='image'?60:120,gesture.sw+dx);
-    if(it.type==='image'){
-      const h=Math.max(40,gesture.sh*(w/gesture.sw));
+    let w=Math.max(it.type==='text'?120:it.type==='ink'?4:60,gesture.sw+dx);
+    if(it.type!=='text'){
+      const h=Math.max(it.type==='ink'?1:40,gesture.sh*(w/gesture.sw));
       it.w=Math.round(w); it.h=Math.round(h);
       el.style.width=it.w+'px'; el.style.height=it.h+'px';
+      if(it.type==='ink'){
+        const svg=el.querySelector('.ink-svg');
+        svg.setAttribute('viewBox','0 0 '+it.w+' '+it.h);
+        svg.querySelector('.ink-path').setAttribute('d',inkPath(it.points,it.w,it.h));
+      }
     }else{
       it.w=Math.round(w); el.style.width=it.w+'px';
     }
@@ -292,6 +315,7 @@ window.addEventListener('pointerup',()=>{
 /* ---------- 空白处平移 ---------- */
 let panning=false, panSX=0, panSY=0, panOX=0, panOY=0, bgMoved=false;
 world.addEventListener('pointerdown',e=>{
+  if(tool==='pen') return;
   if(e.target!==world) return;
   if(e.pointerType==='mouse' && e.button!==0) return;
   panning=true; bgMoved=false; panSX=e.clientX; panSY=e.clientY; panOX=state.panX; panOY=state.panY;
@@ -310,13 +334,96 @@ window.addEventListener('pointerup',()=>{
 });
 view.addEventListener('wheel',e=>{
   e.preventDefault();
+  if(inkDraft) return;
   if(e.ctrlKey) zoomAt(e.clientX,e.clientY,state.zoom*(e.deltaY<0?1.12:1/1.12));
   else{ state.panX-=e.deltaX; state.panY-=e.deltaY; applyView(); }
 },{passive:false});
 
+/* ---------- 自由画笔 ---------- */
+function makeInkSvg(color,width){
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('class','ink-svg');
+  const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+  path.setAttribute('class','ink-path');
+  path.setAttribute('fill','none'); path.setAttribute('stroke',color);
+  path.setAttribute('stroke-width',width); path.setAttribute('stroke-linecap','round'); path.setAttribute('stroke-linejoin','round');
+  svg.appendChild(path);
+  return svg;
+}
+function setTool(next){
+  cancelInkStroke();
+  if(gesture || panning) return;
+  deselectAll();
+  tool=next;
+  view.classList.toggle('drawing',tool==='pen');
+  $('btnPen').classList.toggle('active',tool==='pen');
+  $('btnPen').setAttribute('aria-pressed',String(tool==='pen'));
+  $('penTools').hidden=tool!=='pen';
+  $('hintBar').textContent=tool==='pen'?'拖动画笔圈画 · Ctrl+Z 撤销 · Esc 退出画笔':'拖空白处移动 · Ctrl+滚轮缩放';
+}
+function cancelInkStroke(){
+  if(!inkDraft) return;
+  const draft=inkDraft; inkDraft=null;
+  draft.element.remove();
+  try{ view.releasePointerCapture(draft.pointerId); }catch(e){}
+}
+function addInkPoint(e){
+  if(!inkDraft || e.pointerId!==inkDraft.pointerId || !Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return;
+  const p=viewToStage(e.clientX,e.clientY), points=inkDraft.points, last=points[points.length-1];
+  if(last && Math.hypot(p.x-last[0],p.y-last[1])*state.zoom<0.6) return;
+  points.push([p.x,p.y]);
+  // Keep very long gestures bounded while retaining their start and endpoint.
+  if(points.length>10000) inkDraft.points=points.filter((p,index)=>index%2===0 || index===points.length-1);
+}
+function startInkStroke(e){
+  if(tool!=='pen') return;
+  e.preventDefault(); e.stopPropagation();
+  if(!state.loaded || openingFile){ toast('笔记正在加载，请稍候再圈画'); return; }
+  if(inkDraft || e.isPrimary===false || (e.pointerType==='mouse' && e.button!==0)) return;
+  const before=beginHistoryChange();
+  const svg=makeInkSvg(penColor,penWidth);
+  svg.classList.add('ink-preview');
+  inkLayer.appendChild(svg);
+  inkDraft={pointerId:e.pointerId,points:[],color:penColor,width:penWidth,before,element:svg};
+  addInkPoint(e);
+  svg.querySelector('.ink-path').setAttribute('d',inkPath(inkDraft.points));
+  try{ view.setPointerCapture(e.pointerId); }catch(err){}
+}
+function finishInkStroke(e){
+  if(!inkDraft || e.pointerId!==inkDraft.pointerId) return;
+  addInkPoint(e);
+  const draft=inkDraft;
+  cancelInkStroke();
+  if(!draft.points.length) return;
+  const stroke=normalizeStroke(draft.points,draft.color,draft.width);
+  createItem('ink',stroke.x,stroke.y,stroke);
+  commitHistoryChange(draft.before);
+}
+function bindPen(){
+  $('btnPen').addEventListener('click',()=>setTool(tool==='pen'?'select':'pen'));
+  $('btnPenDone').addEventListener('click',()=>setTool('select'));
+  $('penColor').addEventListener('input',e=>{ if(/^#[0-9a-f]{6}$/i.test(e.target.value)) penColor=e.target.value; });
+  $('penWidth').addEventListener('change',e=>{ const width=Number(e.target.value); if([2,4,8,12].includes(width)) penWidth=width; });
+  $('btnInkUndo').addEventListener('click',undo);
+  $('btnInkRedo').addEventListener('click',redo);
+  view.addEventListener('pointerdown',startInkStroke,true);
+  view.addEventListener('dblclick',e=>{ if(tool==='pen'){ e.preventDefault(); e.stopPropagation(); } },true);
+  window.addEventListener('pointermove',e=>{
+    if(!inkDraft || e.pointerId!==inkDraft.pointerId) return;
+    const samples=e.getCoalescedEvents?.()||[];
+    samples.forEach(addInkPoint); addInkPoint(e);
+    inkDraft.element.querySelector('.ink-path').setAttribute('d',inkPath(inkDraft.points));
+  });
+  window.addEventListener('pointerup',finishInkStroke);
+  window.addEventListener('pointercancel',e=>{ if(inkDraft?.pointerId===e.pointerId) cancelInkStroke(); });
+  view.addEventListener('lostpointercapture',e=>{ if(inkDraft?.pointerId===e.pointerId) cancelInkStroke(); });
+  window.addEventListener('blur',cancelInkStroke);
+}
+
 /* ---------- 文本编辑与格式 ---------- */
 function enterEdit(id){
   const it=state.byId.get(id); if(!it||it.type!=='text') return;
+  if(tool==='pen') setTool('select');
   if(state.editingId===id) return;
   if(state.editingId && state.editingId!==id) exitEdit(state.editingId);
   state.editingId=id;
@@ -417,7 +524,7 @@ function addImageFromDataUrlAt(src,point){
 function duplicateItem(id){
   const it=state.byId.get(id); if(!it) return;
   const before=beginHistoryChange();
-  const copy=createItem(it.type,it.x+24,it.y+24,{w:it.w,h:it.h,rot:it.rot,html:it.html,srcId:it.srcId,fontSize:it.fontSize,align:it.align});
+  const copy=createItem(it.type,it.x+24,it.y+24,{w:it.w,h:it.h,rot:it.rot,html:it.html,srcId:it.srcId,fontSize:it.fontSize,align:it.align,points:it.points,color:it.color,strokeWidth:it.strokeWidth});
   selectItem(copy.id); commitHistoryChange(before); toast('已复制');
 }
 function deleteItem(id){
@@ -569,6 +676,7 @@ async function readClipboardImage(){
 
 /* ---------- 历史（撤销 / 重做） ---------- */
 function beginHistoryChange(){
+  cancelInkStroke();
   if(state.editingId!==null) exitEdit(state.editingId);
   return serializeForSave();
 }
@@ -578,11 +686,13 @@ function commitHistoryChange(before){
   return true;
 }
 function undo(){
+  if(inkDraft){ cancelInkStroke(); return; }
   if(state.editingId!==null || gesture) return;
   const previous=history.undo(serializeForSave());
   if(previous) applyHistory(previous);
 }
 function redo(){
+  if(inkDraft){ cancelInkStroke(); return; }
   if(state.editingId!==null || gesture) return;
   const next=history.redo(serializeForSave());
   if(next) applyHistory(next);
@@ -594,15 +704,18 @@ function applyHistory(data){
   scheduleSave();
 }
 function rebuildItems(items,paper){
+  cancelInkStroke();
   state.items=[]; state.byId.clear();
   world.querySelectorAll('.item').forEach(el=>el.remove());
   state.nextId=1; state.maxZ=0;
   items.forEach(raw=>{
     if(raw.id>=state.nextId) state.nextId=raw.id+1;
     if(raw.z>state.maxZ) state.maxZ=raw.z;
-    const it={id:raw.id,type:raw.type,x:raw.x,y:raw.y,w:raw.w,h:raw.h,rot:raw.rot||0,z:raw.z,html:raw.html,srcId:raw.srcId,fontSize:raw.fontSize||18,align:raw.align||'left'};
+    const it={id:raw.id,type:raw.type,x:raw.x,y:raw.y,w:raw.w,h:raw.h,rot:raw.rot||0,z:raw.z,html:raw.html,srcId:raw.srcId};
+    if(raw.type==='text'){ it.fontSize=raw.fontSize||18; it.align=raw.align||'left'; }
+    if(raw.type==='ink'){ it.points=raw.points.map(p=>p.slice()); it.color=raw.color; it.strokeWidth=raw.strokeWidth; }
     state.items.push(it); state.byId.set(it.id,it);
-    world.appendChild(buildItemEl(it));
+    (it.type==='ink'?inkLayer:world).appendChild(buildItemEl(it));
   });
   state.selectedId=null; state.editingId=null; contextBar.style.display='none';
   applyPaper(paper||state.paper);
@@ -620,7 +733,7 @@ function serializeForSave(){
   }
   const used={};
   state.items.forEach(it=>{ if(it.srcId && state.images[it.srcId]) used[it.srcId]=state.images[it.srcId]; });
-  return {version:1,updatedAt:state.updatedAt,paper:state.paper,items:state.items.map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,w:i.w,h:i.h,rot:i.rot,z:i.z,html:i.html,srcId:i.srcId,fontSize:i.fontSize,align:i.align})),images:used};
+  return {version:state.items.some(i=>i.type==='ink')?2:1,updatedAt:state.updatedAt,paper:state.paper,items:state.items.map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,w:i.w,h:i.h,rot:i.rot,z:i.z,html:i.html,srcId:i.srcId,fontSize:i.fontSize,align:i.align,...(i.type==='ink'?{points:i.points.map(p=>p.slice()),color:i.color,strokeWidth:i.strokeWidth}:{})})),images:used};
 }
 function applySavedData(data,{resetHistory=true}={}){
   const validated=validateNoteData(data);
@@ -869,6 +982,7 @@ async function saveAs(){
 
 /* ---------- 工具栏 ---------- */
 function bindToolbar(){
+  bindPen();
   $('btnNew').addEventListener('click',()=>{
     if(!confirm('确定清空当前笔记，新建空白笔记吗？')) return;
     const before=beginHistoryChange();
@@ -948,6 +1062,8 @@ function bindGlobal(){
     const editing=state.editingId!==null;
     if(cropState && e.key==='Escape'){ e.preventDefault(); closeCrop(); return; }
     if(e.ctrlKey && e.key.toLowerCase()==='s'){ e.preventDefault(); saveNow(); return; }
+    if(!editing && e.key==='Escape' && tool==='pen'){ e.preventDefault(); setTool('select'); return; }
+    if(e.target?.closest?.('input,select,textarea') && !(tool==='pen' && e.ctrlKey && ['z','y'].includes(e.key.toLowerCase()))) return;
     // Let the focused contenteditable handle its native text undo/redo.
     if(e.ctrlKey && e.key.toLowerCase()==='z'){ if(editing) return; e.preventDefault(); if(e.shiftKey) redo(); else undo(); return; }
     if(e.ctrlKey && e.key.toLowerCase()==='y'){ if(editing) return; e.preventDefault(); redo(); return; }
@@ -955,6 +1071,7 @@ function bindGlobal(){
     if(editing) return;
     if((e.key==='Delete'||e.key==='Backspace') && state.selectedId){ e.preventDefault(); deleteItem(state.selectedId); }
     if(e.key==='Escape') deselectAll();
+    if(!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase()==='p'){ e.preventDefault(); setTool(tool==='pen'?'select':'pen'); }
   });
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden && state.dirty && !recoveryNeedsSave) saveNow();
@@ -985,6 +1102,7 @@ function init(){
   bindToolbar();
   bindGlobal();
   applyView();
+  $('startupNotice').hidden=true;
   loadNotes().then(()=>{ document.body.dataset.ready='1'; });
 }
 init();

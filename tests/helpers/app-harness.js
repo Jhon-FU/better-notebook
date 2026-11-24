@@ -4,6 +4,7 @@ import { syncTextItem, syncActiveEditor } from '../../src/js/editor-sync.js';
 import { createHistory } from '../../src/js/history.js';
 import { parseNoteText, validateNoteData } from '../../src/js/note-format.js';
 import { RECOVERY_KEY, readRecovery, sameNoteContent, recoveryPrompt, clearRecoveryIfUnchanged } from '../../src/js/recovery.js';
+import { normalizeStroke, inkPath } from '../../src/js/ink.js';
 
 class Element {
   constructor() {
@@ -15,6 +16,7 @@ class Element {
     this.innerHTML = '';
     this.textContent = '';
     this.contentEditable = 'false';
+    this.attributes = new Map();
     this.classList = {
       add: name => { this.className = [...new Set([...this.className.split(' '), name])].join(' '); },
       remove: name => { this.className = this.className.split(' ').filter(value => value !== name).join(' '); },
@@ -42,6 +44,10 @@ class Element {
   appendChild(element) { element.parent = this; this.childNodes.push(element); }
   remove() { if (this.parent) this.parent.childNodes = this.parent.childNodes.filter(child => child !== this); }
   focus() {}
+  setAttribute(name, value) { this.attributes.set(name, String(value)); if (name === 'class') this.className = value; }
+  getAttribute(name) { return this.attributes.get(name) ?? null; }
+  setPointerCapture(id) { this.capturedPointer = id; }
+  releasePointerCapture(id) { if (this.capturedPointer === id) this.capturedPointer = null; }
   click() { this.emit('click'); }
   getBoundingClientRect() {
     return { left: 0, top: 48, right: 1280, bottom: 800, width: 1280, height: 752 };
@@ -62,6 +68,8 @@ export function createAppHarness() {
     return nodes.get(id);
   };
   document.createElement = () => new Element();
+  document.createElementNS = () => new Element();
+  document.getElementById('world').appendChild(document.getElementById('inkLayer'));
   document.createRange = () => ({ selectNodeContents() {}, collapse() {} });
   document.querySelector = () => new Element();
   document.body = new Element();
@@ -71,6 +79,7 @@ export function createAppHarness() {
   const context = vm.createContext({
     document, window, console, Blob, syncTextItem, syncActiveEditor, createHistory, parseNoteText, validateNoteData,
     RECOVERY_KEY, readRecovery, sameNoteContent, recoveryPrompt, clearRecoveryIfUnchanged,
+    normalizeStroke, inkPath,
     confirm: () => true,
     setTimeout(fn, delay) { timers.set(++timerId, { fn, delay }); return timerId; },
     clearTimeout(id) { timers.delete(id); },

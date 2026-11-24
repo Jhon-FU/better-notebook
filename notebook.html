@@ -8,6 +8,11 @@
 <link rel="stylesheet" href="src/styles/notebook.css">
 </head>
 <body>
+<div id="startupNotice" role="status">
+  <strong>笔记正在加载</strong>
+  <p>如果按钮没有响应，请关闭本页面，在程序文件夹中双击 <b>启动灵动笔记.cmd</b>。</p>
+  <p>直接打开 notebook.html 无法启用编辑功能。</p>
+</div>
 <div id="toolbar">
   <div class="tb-brand"><span class="logo">📒</span>灵动笔记</div>
   <button class="tb-btn" id="btnNew" title="清空并新建空白笔记">新建</button>
@@ -17,6 +22,7 @@
   <button class="tb-btn" id="btnExport" title="导出 JSON 备份文件">导出</button>
   <div class="tb-sep"></div>
   <button class="tb-btn primary" id="btnText" title="在页面中添加一段可自由移动的文字">＋ 文本</button>
+  <button class="tb-btn" id="btnPen" title="自由圈画重点（P）" aria-pressed="false" aria-controls="penTools">✎ 画笔</button>
   <button class="tb-btn primary" id="btnCapture" title="截取屏幕或窗口后，可拖动框选范围，只贴入选中的部分">📷 截图</button>
   <button class="tb-btn" id="btnClipboard" title="从剪贴板读取图片（也可直接 Ctrl+V）">📋 粘贴</button>
   <div class="tb-sep"></div>
@@ -32,7 +38,19 @@
   <button class="tb-btn" id="btnHelp" title="使用帮助">?</button>
   <span id="status"></span>
 </div>
-<div id="view"><div id="world" class="paper-lines"></div></div>
+<div id="view"><div id="world" class="paper-lines"><div id="inkLayer"></div></div></div>
+<div id="penTools" role="group" aria-label="画笔工具" hidden>
+  <label for="penColor">颜色</label>
+  <input id="penColor" type="color" value="#dc2626" title="画笔颜色">
+  <label for="penWidth">粗细</label>
+  <select id="penWidth" title="画笔粗细">
+    <option value="2">细</option><option value="4" selected>中</option>
+    <option value="8">粗</option><option value="12">特粗</option>
+  </select>
+  <button class="tb-btn" id="btnInkUndo" title="撤销上一步（Ctrl+Z）">撤销</button>
+  <button class="tb-btn" id="btnInkRedo" title="重做（Ctrl+Y）">重做</button>
+  <button class="tb-btn primary" id="btnPenDone" title="退出画笔（Esc）">完成圈画</button>
+</div>
 <div id="contextBar"></div>
 <div id="hintBar">拖空白处移动 · Ctrl+滚轮缩放</div>
 <div id="dropHint">松开鼠标即可把图片贴到笔记中</div>
@@ -42,6 +60,7 @@
     <h2>使用帮助</h2>
     <ul>
       <li><b>记录文字：</b>点工具栏「＋ 文本」，或双击已有文字直接编辑；文字块可以像卡片一样任意拖动摆放。</li>
+      <li><b>自由圈画：</b>点「✎ 画笔」或按 <kbd>P</kbd>，拖动鼠标即可在文字和截图上圈画，支持颜色与粗细选择；每一笔都可以撤销。按 <kbd>Esc</kbd> 或点「完成圈画」退出后，点击笔迹可移动、缩放、旋转、复制或删除。笔迹与卡片独立，移动卡片时请同时调整相关笔迹。</li>
       <li><b>截图贴纸：</b>点「📷 截图」选择屏幕/窗口后，会弹出裁剪框，拖动选区或四角即可自由框选范围，确认后只把选中的部分贴入笔记；也可以按 <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> 截屏后，在笔记中按 <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴。</li>
       <li><b>贴纸自由变换：</b>选中贴纸后，拖右下角手柄缩放、拖顶部圆点旋转、拖贴纸本身移动。</li>
       <li><b>加粗 / 高亮：</b>双击进入编辑，选中文字后用弹出的浮动工具条加粗、高亮、改颜色、调字号。</li>

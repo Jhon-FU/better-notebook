@@ -17,6 +17,26 @@ html,body {
   background:#31363d;
 }
 
+#startupNotice {
+  position:fixed;
+  top:72px;
+  left:50%;
+  transform:translateX(-50%);
+  width:min(560px,calc(100% - 32px));
+  z-index:200;
+  padding:20px 24px;
+  border:1px solid #e4c77a;
+  border-radius:10px;
+  background:#fff9e6;
+  color:#493b13;
+  line-height:1.7;
+  box-shadow:0 8px 28px rgba(0,0,0,.2);
+}
+
+#startupNotice p {
+  margin:8px 0 0;
+}
+
 #toolbar {
   position:fixed;
   top:0;
@@ -31,7 +51,49 @@ html,body {
   background:linear-gradient(180deg,#3b4250,#313742);
   color:#eef2f7;
   box-shadow:0 2px 12px rgba(0,0,0,.25);
+  overflow-x:auto;
+  scrollbar-width:thin;
 }
+
+#toolbar > * { flex-shrink:0; }
+
+#penTools {
+  position:fixed;
+  top:60px;
+  left:50%;
+  transform:translateX(-50%);
+  z-index:110;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  max-width:calc(100vw - 24px);
+  flex-wrap:wrap;
+  padding:10px 12px;
+  border-radius:10px;
+  background:#1f2937;
+  color:#f1f5f9;
+  font-size:13px;
+  box-shadow:0 4px 16px rgba(0,0,0,.3);
+}
+
+#penTools[hidden] { display:none; }
+#penColor { width:32px; height:30px; padding:2px; border:0; cursor:pointer; }
+#penWidth { height:30px; border-radius:5px; }
+
+#inkLayer {
+  position:absolute;
+  inset:0;
+  z-index:2147483647;
+  pointer-events:none;
+}
+
+.ink-item, .ink-svg { pointer-events:none; }
+.ink-svg { display:block; width:100%; height:100%; overflow:visible; }
+.ink-item .ink-path { pointer-events:stroke; }
+.ink-item .handle { pointer-events:auto; }
+.ink-item.selected { outline:1px dashed var(--accent); }
+.ink-preview { position:absolute; inset:0; }
+#view.drawing, #view.drawing * { cursor:crosshair; touch-action:none; }
 
 .tb-brand {
   display:flex;

@@ -79,6 +79,7 @@ test('PowerShell server serves split assets and isolates test notes', {
     ['/src/js/history.js', 'text/javascript'],
     ['/src/js/note-format.js', 'text/javascript'],
     ['/src/js/recovery.js', 'text/javascript'],
+    ['/src/js/ink.js', 'text/javascript'],
     ['/icon.ico', 'image/x-icon'],
   ]) {
     const result = await request(port, url);
@@ -94,4 +95,11 @@ test('PowerShell server serves split assets and isolates test notes', {
   assert.equal((await request(port, '/notes.json', 'PUT', JSON.stringify(note))).status, 200);
   assert.deepEqual(JSON.parse((await request(port, '/notes.json')).body), note);
   assert.deepEqual(JSON.parse(await readFile(path.join(dataDir, 'notes.json'), 'utf8')), note);
+  const inkNote = { version: 2, paper: 'lines', items: [
+    { id: 1, type: 'ink', x: 10, y: 20, w: 100, h: 80, z: 1, rot: 0,
+      color: '#dc2626', strokeWidth: 4, points: [[0.1, 0.2], [0.9, 0.8]] },
+  ], images: {} };
+  assert.equal((await request(port, '/notes.json', 'PUT', JSON.stringify(inkNote))).status, 200);
+  assert.deepEqual(JSON.parse((await request(port, '/notes.json')).body), inkNote);
+  assert.deepEqual(JSON.parse(await readFile(path.join(dataDir, 'notes.json'), 'utf8')), inkNote);
 });

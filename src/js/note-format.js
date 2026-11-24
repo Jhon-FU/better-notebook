@@ -19,7 +19,7 @@ function number(value, path, { positive = false, integer = false } = {}) {
 /** Validate the whole document before the caller changes any live state. */
 export function validateNoteData(data) {
   if (!isObject(data)) fail('文件', '必须是对象');
-  if (data.version !== 1) fail('version', '必须为 1；不支持缺失或其他版本');
+  if (![1, 2].includes(data.version)) fail('version', '必须为 1 或 2；不支持缺失或其他版本');
   const updatedAt = data.updatedAt === undefined ? 0 : data.updatedAt;
   if (!Number.isSafeInteger(updatedAt) || updatedAt < 0 || updatedAt > 8640000000000000) {
     fail('updatedAt', '必须是有效的非负毫秒时间戳');
@@ -45,7 +45,8 @@ export function validateNoteData(data) {
     const id = number(raw.id, `${path}.id`, { positive: true, integer: true });
     if (ids.has(id)) fail(`${path}.id`, '不能重复');
     ids.add(id);
-    if (!['text', 'image'].includes(raw.type)) fail(`${path}.type`, '必须是 text 或 image');
+    if (!['text', 'image', 'ink'].includes(raw.type)) fail(`${path}.type`, '必须是 text、image 或 ink');
+    if (raw.type === 'ink' && data.version !== 2) fail(`${path}.type`, '笔迹需要版本 2');
     const item = {
       id, type: raw.type,
       x: number(raw.x, `${path}.x`), y: number(raw.y, `${path}.y`),
@@ -60,6 +61,22 @@ export function validateNoteData(data) {
       item.fontSize = number(raw.fontSize === undefined ? 18 : raw.fontSize, `${path}.fontSize`, { positive: true });
       item.align = raw.align === undefined ? 'left' : raw.align;
       if (!['left', 'center', 'right'].includes(item.align)) fail(`${path}.align`, '不是支持的对齐方式');
+    } else if (raw.type === 'ink') {
+      item.h = number(raw.h, `${path}.h`, { positive: true });
+      if (typeof raw.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(raw.color)) fail(`${path}.color`, '必须为六位十六进制颜色');
+      item.color = raw.color;
+      item.strokeWidth = number(raw.strokeWidth, `${path}.strokeWidth`);
+      if (item.strokeWidth < 1 || item.strokeWidth > 32) fail(`${path}.strokeWidth`, '必须在 1 到 32 之间');
+      if (!Array.isArray(raw.points) || !raw.points.length || raw.points.length > 10000) fail(`${path}.points`, '必须包含 1 到 10000 个坐标点');
+      item.points = raw.points.map((point, pointIndex) => {
+        const pointPath = `${path}.points[${pointIndex}]`;
+        if (!Array.isArray(point) || point.length !== 2) fail(pointPath, '必须是两个坐标组成的数组');
+        return point.map(value => {
+          number(value, pointPath);
+          if (value < 0 || value > 1) fail(pointPath, '坐标必须在 0 到 1 之间');
+          return value;
+        });
+      });
     } else {
       item.h = number(raw.h, `${path}.h`, { positive: true });
       if (typeof raw.srcId !== 'string' || !own(images, raw.srcId)) fail(`${path}.srcId`, '没有对应的图片资源');
@@ -67,7 +84,7 @@ export function validateNoteData(data) {
     }
     return item;
   });
-  return { version: 1, updatedAt, paper, items, images };
+  return { version: data.version, updatedAt, paper, items, images };
 }
 
 export function parseNoteText(text) {

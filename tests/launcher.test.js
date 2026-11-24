@@ -24,17 +24,21 @@ async function fixture(t) {
     await rm(resolved, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   await mkdir(root);
-  for (const name of ['scripts', 'src', 'launcher.ps1', 'server.ps1', 'notebook.html', 'icon.ico', 'package.json']) {
+  for (const name of ['scripts', 'src', 'launcher.ps1', '启动灵动笔记.cmd', 'server.ps1', 'notebook.html', 'icon.ico', 'package.json']) {
     await cp(path.join(projectRoot, name), path.join(root, name), { recursive: true });
   }
   return { root, processes };
 }
 
-async function launch(f, port, timeout = 10) {
-  const child = spawn('powershell.exe', [
+async function launch(f, port, timeout = 10, commandEntry = false) {
+  const args = commandEntry ? [
+    '-NoProfile', '-Command',
+    `& '${path.join(f.root, '启动灵动笔记.cmd').replaceAll("'", "''")}' -Port ${port} -CheckOnly -StartupTimeoutSeconds ${timeout}; exit $LASTEXITCODE`,
+  ] : [
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(f.root, 'launcher.ps1'),
     '-Port', String(port), '-CheckOnly', '-StartupTimeoutSeconds', String(timeout),
-  ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  ];
+  const child = spawn('powershell.exe', args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   child.stdout.on('data', data => { output += data.toString(); });
   child.stderr.on('data', data => { output += data.toString(); });
@@ -72,6 +76,14 @@ test('launcher starts from a Unicode path containing spaces and reuses only the 
   await assert.rejects(access(path.join(f.root, 'profile')));
   assert.equal(await readFile(path.join(f.root, 'logs', `server-${port}.error.log`), 'utf8'), '');
   assert.equal((await request(port, '/logs/server-' + port + '.error.log')).status, 404);
+});
+
+test('double-click entry starts the service correctly from a Unicode path with spaces and ampersands', windows, async t => {
+  const f = await fixture(t);
+  const port = await freePort();
+  const result = await launch(f, port, 10, true);
+  assert.equal(result.code, 0, result.output);
+  assert.equal((await request(port, '/notebook.html')).status, 200);
 });
 
 test('launcher refuses an unrelated HTTP server instead of treating an open port as ready', windows, async t => {

@@ -38,7 +38,7 @@ for (const [label, source] of [
   ['array root', '[]'],
   ['null root', 'null'],
   ['missing version', '{"items":[]}'],
-  ['unsupported version', '{"version":2,"items":[]}'],
+  ['unsupported version', '{"version":3,"items":[]}'],
   ['string version', '{"version":"1","items":[]}'],
 ]) {
   test(`rejects ${label}`, () => assert.throws(() => parseNoteText(source), NoteFormatError));
